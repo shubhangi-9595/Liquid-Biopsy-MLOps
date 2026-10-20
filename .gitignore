@@ -31,3 +31,9 @@ rendered/
 .DS_Store
 .vscode/
 .idea/
+
+# External validation data (download from GEO GSE107868)
+data/external/
+
+# External validation data (download from GEO GSE107868)
+data/external/
