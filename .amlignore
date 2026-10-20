@@ -1,0 +1,18 @@
+# Files NOT uploaded to Azure ML when submitting azureml/train-job.yml
+.git
+.github
+.devcontainer
+.venv
+venv
+__pycache__
+*.pyc
+.pytest_cache
+.ruff_cache
+mlruns
+mlflow.db
+models
+notebooks
+docs
+k8s
+infra
+tests

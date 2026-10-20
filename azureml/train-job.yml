@@ -1,0 +1,27 @@
+# Optional: run training as an Azure Machine Learning job on serverless compute.
+#
+#   az ml job create -f azureml/train-job.yml -g rg-liquid-biopsy -w <workspace> --stream
+#
+# Inside the job, Azure ML sets MLFLOW_TRACKING_URI automatically, so the same training
+# code logs its parameters, metrics and artifacts to the workspace's Jobs page.
+#
+# Notes for student subscriptions
+#   - The first run builds the environment image; Azure ML creates its own container
+#     registry for that (Basic tier), which then costs a few dollars per month.
+#   - If you get a quota error for the VM size, request quota in the Azure ML studio
+#     (Quotas page) or try another size such as Standard_DS2_v2 / Standard_D2as_v4.
+$schema: https://azuremlschemas.azureedge.net/latest/commandJob.schema.json
+type: command
+display_name: liquid-biopsy-train
+experiment_name: liquid-biopsy-cancer-classifier
+description: Train and evaluate the liquid biopsy classifier (SMOTE + Random Forest, quality gate)
+code: ..
+command: >-
+  PYTHONPATH=src python -m liquid_biopsy.validate &&
+  PYTHONPATH=src python -m liquid_biopsy.train
+environment:
+  image: mcr.microsoft.com/azureml/openmpi4.1.0-ubuntu22.04:latest
+  conda_file: conda.yml
+resources:
+  instance_type: Standard_DS3_v2
+  instance_count: 1

@@ -1,0 +1,5 @@
+# Used by the CD pipeline to log the CI-tested model run to Azure Machine Learning.
+# mlflow-skinny = tracking client only (no server/UI), as Microsoft recommends for logging.
+mlflow-skinny==3.17.1
+azureml-mlflow==1.60.0
+PyYAML==6.0.3
