@@ -1,0 +1,19 @@
+# Serving (inference) dependencies, installed in the Docker image.
+# scikit-learn and imbalanced-learn MUST match the versions used for training:
+# a pickled model is only guaranteed to load with the exact same versions.
+scikit-learn==1.9.1
+imbalanced-learn==0.14.2
+pandas==3.0.5
+numpy==2.5.3
+joblib==1.6.0
+fastapi==0.148.0
+uvicorn==0.53.0
+pydantic==2.13.5
+
+# Database: prediction logging, migrations
+SQLAlchemy==2.0.55
+alembic==1.20.0
+psycopg[binary]==3.3.6
+
+# Azure Application Insights (only active when its connection string is set)
+azure-monitor-opentelemetry==1.8.11

@@ -1,0 +1,32 @@
+# Single source of truth for the training pipeline.
+# Change a value here, push, and CI retrains + re-evaluates automatically.
+
+data:
+  path: data/raw/Prepro_data.csv
+  # Sample names starting with these prefixes are healthy donors (label 0);
+  # every other sample is a cancer patient (label 1).
+  healthy_prefixes: ["HD", "Control"]
+
+split:
+  test_size: 0.25
+  random_state: 42
+
+model:
+  random_state: 42
+  cv_folds: 5
+  # Hyperparameter grid searched with stratified CV on the training set only.
+  # Based on the original notebook (55 trees, max_features=8 performed best).
+  param_grid:
+    clf__n_estimators: [55, 150, 500]
+    clf__max_features: [4, 8, "sqrt"]
+    clf__min_samples_leaf: [1, 3]
+
+# Quality gate: CI/CD refuses to ship a model below these test-set scores.
+quality_gate:
+  min_roc_auc: 0.85
+  min_balanced_accuracy: 0.75
+
+artifacts:
+  dir: models
+  mlflow_tracking_uri: sqlite:///mlflow.db
+  mlflow_experiment: liquid-biopsy-cancer-classifier

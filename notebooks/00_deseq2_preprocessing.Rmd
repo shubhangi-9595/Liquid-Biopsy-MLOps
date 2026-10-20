@@ -1,0 +1,145 @@
+---
+title: "R Notebook"
+output:
+  pdf_document: default
+  html_document:
+    df_print: paged
+  word_document: default
+---
+
+This is an [R Markdown](http://rmarkdown.rstudio.com) Notebook. When you execute code within the notebook, the results appear beneath the code. 
+
+Try executing this chunk by clicking the *Run* button within the chunk or by placing your cursor inside it and pressing *Ctrl+Shift+Enter*. 
+
+
+```{r}
+library(DESeq2)
+```
+
+```{r}
+data<-read.table("GSE68086_TEP_data_matrix.txt",header = TRUE, sep = "\t")
+data
+```
+
+```{r}
+colnames(data)[colnames(data)=="X"]<-"Genes"
+#data
+
+#removing Type unknown from the data
+colrem<-grep("^Type.Unknown",colnames(data))
+val<-data.frame(data[,-colrem])
+#print(val)
+#the genes name stored in genes
+genes<-data.frame(val[,1])
+#all the sample names stored here
+coli<-data.frame(colnames(val[,-1]))
+#coli
+#colnames(val[,-1])
+#So in the sample we named HD and Control groups as Non-Cancer and others as Cancer and stored them in a column name group in coli data frame 
+group<-grep("^HD|^Control",colnames(val[,-1]))
+#group
+for(i in 1:nrow(coli))
+{
+  if(i %in% group)
+  {
+    coli$grp[i]="Non_Cancer"
+  }
+  else
+  {
+    coli$grp[i]="Cancer"
+  }
+}
+genes
+coli
+#dataval contains values of data without type unknown that is without gene ids
+dataval<-data.frame(val[,-1])
+dataval
+'r<-rowSums(as.matrix(dataval)>=5)>=1
+r'
+#any data below 5 we remove the entire row
+datfil<- dataval[!apply(dataval, 1, function(row) any(row < 5)), ]
+datfil
+#removing rows from the data where all the values are below 5
+'datfil<-dataval[rowSums(dataval < 5) != ncol(dataval), ]
+datfil
+
+removed_indices <- which(rowSums(dataval < 5) == ncol(dataval))
+removed_indices
+datafil <- dataval[rowSums(dataval < 5) != ncol(dataval), ]
+datafil'
+
+'
+for(i in 1:nrow(dataval))
+{
+  #print(length(dataval[i,]))
+  for(j in 1:length(dataval[i,]))
+  {
+    if(dataval[i,j]<=5)
+    {
+      dataval<-dataval[-i,]
+    }
+  }
+}'
+#coli
+#print(data.frame(colnames(val[,-1])))
+#val[,-1]
+#print(".......................................")
+#genes
+```
+```{r}
+#Running Deseq
+count<-as.matrix(datfil)
+#count
+#count
+coli
+row.names(coli) <- coli$name
+
+# Remove the first column
+
+coli
+#colnames(coli)[1] <- "name"
+cc<-coli$grp
+#cc
+#count
+#count is the matrix of the data filtered above 5, coldata is the name of the columns and their group
+#and design is the name of the columns in the coli
+descount<-DESeqDataSetFromMatrix(countData = count,colData = coli,design =~ grp)
+#rownames(descount)<- NULL
+descount
+descount<-estimateSizeFactors(descount)
+descount
+dsqcount<-DESeq(descount)
+```
+```{r}
+resu <- results(dsqcount)
+resu
+```
+```{r}
+resFilt <- resu[which(resu$padj < 0.05 & abs(resu$log2FoldChange) > 1), ]
+
+
+
+```
+```{r}
+dataq<-data.frame()
+for(i in 1:nrow(data))
+{
+  if(i %in% resFilt@rownames)
+  {
+    dataq<-rbind(dataq,data[i,])
+  }
+  else
+  {
+    next
+  }
+}
+dataq
+write.csv(dataq, file="Prepro_data.csv")
+```
+
+
+Add a new chunk by clicking the *Insert Chunk* button on the toolbar or by pressing *Ctrl+Alt+I*.
+
+When you save the notebook, an HTML file containing the code and output will be saved alongside it (click the *Preview* button or press *Ctrl+Shift+K* to preview the HTML file).
+
+The preview shows you a rendered HTML copy of the contents of the editor. Consequently, unlike *Knit*, *Preview* does not run any R code chunks. Instead, the output of the chunk when it was last run in the editor is displayed.

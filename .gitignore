@@ -1,0 +1,33 @@
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+*.egg-info/
+.pytest_cache/
+.ruff_cache/
+
+# Trained artifacts are produced by the pipeline, never committed
+models/*
+!models/.gitkeep
+
+# MLflow
+mlruns/
+mlflow.db
+mlartifacts/
+
+# Secrets (k8s/overlays/aks/azure.env is NOT secret: only resource names and IDs)
+.env
+*.publishsettings
+
+# CI / local outputs
+test-results.xml
+drift.log
+port-forward.log
+rendered/
+*.bicep.json
+
+# OS / editors
+.DS_Store
+.vscode/
+.idea/
