@@ -16,8 +16,8 @@ resources:
 
 images:
   - name: liquid-biopsy-api
-    newName: REPLACE_WITH_ACR.azurecr.io/liquid-biopsy-api
-    newTag: latest
+    newName: acrlbubqw7kfueyiby.azurecr.io/liquid-biopsy-api
+    newTag: 9f65a35
 
 configMapGenerator:
   - name: azure-values
