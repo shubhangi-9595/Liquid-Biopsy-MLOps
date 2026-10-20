@@ -27,7 +27,11 @@ def params():
 
 @pytest.fixture(scope="session")
 def dataset(params):
-    return load_dataset(resolve(params["data"]["path"]), params["data"]["healthy_prefixes"])
+    return load_dataset(
+        resolve(params["data"]["path"]),
+        params["data"]["healthy_prefixes"],
+        params["data"].get("exclude_prefixes"),
+    )
 
 
 @pytest.fixture(scope="session")

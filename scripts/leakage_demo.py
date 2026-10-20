@@ -38,7 +38,11 @@ def scores(y_true, proba):
 
 def main() -> None:
     params = load_params()
-    df = load_dataset(resolve(params["data"]["path"]), params["data"]["healthy_prefixes"])
+    df = load_dataset(
+        resolve(params["data"]["path"]),
+        params["data"]["healthy_prefixes"],
+        params["data"].get("exclude_prefixes"),
+    )
     X, y = split_features_target(df)
     rf = dict(n_estimators=55, max_features=8, n_jobs=-1)  # the notebook's final settings
 

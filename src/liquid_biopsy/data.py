@@ -20,8 +20,13 @@ def label_from_sample_name(name: str, healthy_prefixes: list[str]) -> int:
     return 0 if str(name).startswith(tuple(healthy_prefixes)) else 1
 
 
-def load_dataset(path: str | Path, healthy_prefixes: list[str]) -> pd.DataFrame:
-    """Return a sample-major frame: one row per sample, gene columns + `label`."""
+def load_dataset(
+    path: str | Path, healthy_prefixes: list[str], exclude_prefixes: list[str] | None = None
+) -> pd.DataFrame:
+    """Return a sample-major frame: one row per sample, gene columns + `label`.
+
+    Samples whose name starts with any of `exclude_prefixes` are dropped (uncertain labels).
+    """
     raw = pd.read_csv(path)
     raw = raw.drop(columns=[c for c in raw.columns if c.startswith("Unnamed")])
     if "Genes" not in raw.columns:
@@ -30,6 +35,8 @@ def load_dataset(path: str | Path, healthy_prefixes: list[str]) -> pd.DataFrame:
     df = raw.set_index("Genes").T
     df.columns.name = None
     df.index.name = "sample"
+    if exclude_prefixes:
+        df = df[~df.index.str.startswith(tuple(exclude_prefixes))]
     df = df.apply(pd.to_numeric, errors="coerce")
     df[TARGET] = [label_from_sample_name(s, healthy_prefixes) for s in df.index]
     return df

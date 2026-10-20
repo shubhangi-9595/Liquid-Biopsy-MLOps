@@ -74,7 +74,11 @@ def validate_dataset(df: pd.DataFrame, min_samples: int = 100, min_class_count: 
 
 def main() -> int:
     params = load_params()
-    df = load_dataset(resolve(params["data"]["path"]), params["data"]["healthy_prefixes"])
+    df = load_dataset(
+        resolve(params["data"]["path"]),
+        params["data"]["healthy_prefixes"],
+        params["data"].get("exclude_prefixes"),
+    )
     report = validate_dataset(df)
     counts = df[TARGET].value_counts().to_dict()
     print(

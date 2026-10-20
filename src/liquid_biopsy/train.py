@@ -142,7 +142,11 @@ def main(argv: list[str] | None = None) -> int:
     seed = params["model"]["random_state"]
 
     # 1. Load + validate
-    df = load_dataset(resolve(params["data"]["path"]), params["data"]["healthy_prefixes"])
+    df = load_dataset(
+        resolve(params["data"]["path"]),
+        params["data"]["healthy_prefixes"],
+        params["data"].get("exclude_prefixes"),
+    )
     report = validate_dataset(df)
     if not report.ok:
         print("Data validation failed:", *report.errors, sep="\n  ")

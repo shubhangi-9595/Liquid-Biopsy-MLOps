@@ -14,10 +14,10 @@ def test_label_from_sample_name():
 
 def test_dataset_shape_and_labels(dataset):
     X, y = split_features_target(dataset)
-    assert X.shape == (285, 90)
+    assert X.shape == (280, 90)  # 285 samples minus 5 "Type.Unknown"
     assert set(y.unique()) == {0, 1}
     assert (y == 0).sum() == 54  # healthy donors
-    assert (y == 1).sum() == 231  # cancer patients
+    assert (y == 1).sum() == 226  # cancer patients
     assert all(c.startswith("ENSG") for c in X.columns)
 
 
@@ -44,3 +44,16 @@ def test_validation_catches_single_class(dataset):
     broken = dataset.copy()
     broken[TARGET] = 1
     assert not validate_dataset(broken).ok
+
+
+def test_uncertain_samples_are_excluded(dataset, params):
+    assert params["data"]["exclude_prefixes"] == ["Type.Unknown"]
+    assert not dataset.index.str.startswith("Type.Unknown").any()
+
+
+def test_exclusion_is_optional(params):
+    from liquid_biopsy.config import resolve
+    from liquid_biopsy.data import load_dataset
+
+    everything = load_dataset(resolve(params["data"]["path"]), params["data"]["healthy_prefixes"])
+    assert len(everything) == 285

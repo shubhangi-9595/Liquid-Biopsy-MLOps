@@ -6,6 +6,11 @@ data:
   # Sample names starting with these prefixes are healthy donors (label 0);
   # every other sample is a cancer patient (label 1).
   healthy_prefixes: ["HD", "Control"]
+  # Samples left out of training and evaluation. "Type.Unknown" samples have no recorded
+  # tumour type, so their label is uncertain. The original R preprocessing meant to remove
+  # them but wrote its output from the unfiltered table. Impact measured over 20 splits:
+  # ROC-AUC 0.935 -> 0.922 (within split-to-split variation of +/-0.04).
+  exclude_prefixes: ["Type.Unknown"]
 
 split:
   test_size: 0.25
