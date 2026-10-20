@@ -1,0 +1,197 @@
+# Continuous Deployment to Azure. Runs after CI succeeds on main.
+#
+#  1. Download the exact model CI trained and tested (what you tested is what you ship)
+#  2. Log in to Azure with OIDC (no stored passwords)
+#  3. Azure Machine Learning: log the run (MLflow) and register the model in the registry
+#  4. Build the image and push it to Azure Container Registry
+#  5. Deploy the Container App + daily drift job with Bicep (infrastructure as code)
+#  6. Smoke-test the live API
+#  7. GitOps: commit the new image tag to k8s/overlays/aks; Argo CD rolls it out on AKS
+#
+# Skipped (not failed) until infra/setup.sh has run and AZURE_RESOURCE_GROUP is set.
+
+name: CD
+
+on:
+  workflow_run:
+    workflows: ["CI"]
+    types: [completed]
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      ci_run_id:
+        description: "CI run ID whose model to deploy (empty = latest successful run on main)"
+        required: false
+
+permissions:
+  contents: write   # GitOps commit of the new image tag
+  actions: read     # download the model artifact from the CI run
+  id-token: write   # OIDC login to Azure
+
+concurrency:
+  group: cd-production
+  cancel-in-progress: false
+
+env:
+  IMAGE_NAME: liquid-biopsy-api
+  MODEL_NAME: liquid-biopsy-classifier
+  PYTHON_VERSION: "3.12"
+  MLFLOW_DISABLE_AGENT_HINT: "1"
+
+jobs:
+  deploy:
+    name: Deploy to Azure
+    if: >-
+      vars.AZURE_RESOURCE_GROUP != '' &&
+      (github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success')
+    runs-on: ubuntu-latest
+    environment:
+      name: production
+      url: ${{ steps.deploy.outputs.url }}/docs
+    env:
+      RG: ${{ vars.AZURE_RESOURCE_GROUP }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ github.event.workflow_run.head_sha || github.sha }}
+
+      - name: Find the CI run to deploy
+        id: run
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          RUN_ID="${{ github.event.workflow_run.id || inputs.ci_run_id }}"
+          if [ -z "$RUN_ID" ]; then
+            RUN_ID=$(gh run list --workflow CI --branch main --status success --limit 1 --json databaseId -q '.[0].databaseId')
+          fi
+          echo "id=$RUN_ID" >> "$GITHUB_OUTPUT"
+          echo "url=${{ github.server_url }}/${{ github.repository }}/actions/runs/$RUN_ID" >> "$GITHUB_OUTPUT"
+
+      - uses: actions/download-artifact@v8
+        with:
+          name: model
+          path: models/
+          run-id: ${{ steps.run.outputs.id }}
+          github-token: ${{ github.token }}
+
+      - name: Azure login (OIDC)
+        uses: azure/login@v3
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Look up Azure resources
+        id: az
+        run: |
+          az extension add --name ml --upgrade --only-show-errors
+          ACR=$(az acr list -g "$RG" --query "[0].loginServer" -o tsv)
+          SHA=$(git rev-parse --short HEAD)
+          {
+            echo "acr=$ACR"
+            echo "workspace=$(az ml workspace list -g "$RG" --query '[0].name' -o tsv)"
+            echo "sha=$SHA"
+            echo "image=$ACR/$IMAGE_NAME:$SHA"
+            echo "model_version=$(jq -r .model_version models/metadata.json)"
+            echo "roc_auc=$(jq -r .test_metrics.roc_auc models/metadata.json)"
+          } >> "$GITHUB_OUTPUT"
+
+      - uses: actions/setup-python@v7
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+
+      # Tracking and registry are recorded for traceability; a problem here never blocks a release
+      - name: Azure ML - log the run (MLflow)
+        id: aml
+        continue-on-error: true
+        env:
+          CI_RUN_URL: ${{ steps.run.outputs.url }}
+        run: |
+          pip install -q -r requirements-azureml.txt
+          MLFLOW_TRACKING_URI=$(az ml workspace show -g "$RG" -n "${{ steps.az.outputs.workspace }}" --query mlflow_tracking_uri -o tsv)
+          export MLFLOW_TRACKING_URI
+          RUN_ID=$(PYTHONPATH=src python -m liquid_biopsy.azureml_log --model-dir models | tail -1)
+          echo "run_id=$RUN_ID" >> "$GITHUB_OUTPUT"
+
+      - name: Azure ML - register the model
+        id: register
+        continue-on-error: true
+        run: |
+          WS="${{ steps.az.outputs.workspace }}"
+          LATEST=$(az ml model list -g "$RG" -w "$WS" --name "$MODEL_NAME" --query "max([].to_number(version))" -o tsv 2>/dev/null || true)
+          NEXT=$(( ${LATEST:-0} + 1 ))
+          az ml model create -g "$RG" -w "$WS" \
+            --name "$MODEL_NAME" --version "$NEXT" --type custom_model --path models \
+            --description "SMOTE + Random Forest liquid biopsy classifier (${{ steps.az.outputs.model_version }})" \
+            --tags git_sha="${{ steps.az.outputs.sha }}" \
+                   model_version="${{ steps.az.outputs.model_version }}" \
+                   test_roc_auc="${{ steps.az.outputs.roc_auc }}" \
+                   mlflow_run_id="${{ steps.aml.outputs.run_id }}" \
+                   ci_run="${{ steps.run.outputs.url }}" \
+            -o none
+          echo "version=$NEXT" >> "$GITHUB_OUTPUT"
+
+      - name: Build and push image to Azure Container Registry
+        run: |
+          ACR="${{ steps.az.outputs.acr }}"
+          az acr login --name "${ACR%%.*}"
+          docker build -t "${{ steps.az.outputs.image }}" -t "$ACR/$IMAGE_NAME:latest" .
+          docker push "${{ steps.az.outputs.image }}"
+          docker push "$ACR/$IMAGE_NAME:latest"
+
+      - name: Deploy Container App + drift job (Bicep)
+        id: deploy
+        run: |
+          URL=$(az deployment group create -g "$RG" \
+            --name "app-${{ steps.az.outputs.sha }}-${{ github.run_number }}" \
+            --template-file infra/bicep/app.bicep \
+            --parameters image="${{ steps.az.outputs.image }}" \
+            --query properties.outputs.url.value -o tsv)
+          echo "url=$URL" >> "$GITHUB_OUTPUT"
+
+      - name: Smoke test the live API
+        env:
+          SMOKE_TRIES: "40"   # scale-from-zero cold start
+        run: bash scripts/smoke_test.sh "${{ steps.deploy.outputs.url }}"
+
+      - name: Check database connection
+        continue-on-error: true   # e.g. the database was paused with infra/pause.sh
+        run: |
+          DB=$(curl -sf "${{ steps.deploy.outputs.url }}/health" | jq -r .database)
+          echo "database: $DB"
+          if [ "$DB" != "connected" ]; then
+            echo "::warning::API is live but the database is '$DB' (paused?). Predictions are served but not stored."
+            exit 1
+          fi
+
+      - name: GitOps - commit new image tag for Argo CD (AKS)
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git fetch origin main
+          git checkout -B gitops-update origin/main
+          sed -i -E \
+            -e "s#^([[:space:]]*newName:).*/${IMAGE_NAME}\$#\1 ${{ steps.az.outputs.acr }}/${IMAGE_NAME}#" \
+            -e "s#^([[:space:]]*newTag:).*#\1 ${{ steps.az.outputs.sha }}#" \
+            k8s/overlays/aks/kustomization.yaml
+          if git diff --quiet; then
+            echo "Manifests already reference this image."
+          else
+            git commit -am "deploy: ${IMAGE_NAME} ${{ steps.az.outputs.sha }} [skip ci]"
+            git push origin HEAD:main
+          fi
+
+      - name: Summary
+        if: always()
+        run: |
+          {
+            echo "## Deployment"
+            echo "| | |"
+            echo "|---|---|"
+            echo "| API | ${{ steps.deploy.outputs.url }}/docs |"
+            echo "| Image | \`${{ steps.az.outputs.image }}\` |"
+            echo "| Model | \`${{ steps.az.outputs.model_version }}\` (test ROC-AUC ${{ steps.az.outputs.roc_auc }}) |"
+            echo "| Azure ML model registry | \`${MODEL_NAME}\` version ${{ steps.register.outputs.version || 'not registered' }} |"
+            echo "| Azure ML run | ${{ steps.aml.outputs.run_id || 'not logged' }} |"
+            echo "| Trained in CI run | ${{ steps.run.outputs.url }} |"
+          } >> "$GITHUB_STEP_SUMMARY"

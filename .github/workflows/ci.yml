@@ -1,0 +1,239 @@
+# Continuous Integration: runs on every push and pull request.
+#
+#   quality     lint, data validation, unit/API/database tests on a real Postgres
+#   infra       compile + lint Bicep, render + schema-check Kubernetes manifests, shellcheck
+#   train       train, tune, evaluate, quality gate, MLflow tracking, upload the model
+#   container   build the image with that model; test API + Postgres + drift job in Docker
+#   kubernetes  deploy the same image to a throwaway Kubernetes cluster (kind) and test it
+#
+# On main, a green run triggers cd.yml, which deploys the *same* model artifact to Azure.
+
+name: CI
+
+on:
+  push:
+    branches: ["**"]
+    paths-ignore: ["**.md", "docs/**"]
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+env:
+  PYTHON_VERSION: "3.12"   # keep in sync with the Dockerfile base image
+  MLFLOW_DISABLE_AGENT_HINT: "1"
+  BICEP_VERSION: v0.48.1
+  KUSTOMIZE_VERSION: v5.8.3
+  KUBECONFORM_VERSION: v0.8.0
+  KIND_VERSION: v0.33.0
+
+jobs:
+  quality:
+    name: Lint, validate data, test
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: lb
+          POSTGRES_PASSWORD: lbpass
+          POSTGRES_DB: lbtest
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U lb -d lbtest"
+          --health-interval 5s --health-timeout 5s --health-retries 10
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-python@v7
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: pip
+          cache-dependency-path: requirements*.txt
+
+      - name: Install dependencies
+        run: pip install -r requirements-dev.txt
+
+      - name: Lint (ruff)
+        run: |
+          ruff check .
+          ruff format --check .
+
+      - name: Validate data
+        run: PYTHONPATH=src python -m liquid_biopsy.validate
+
+      - name: Unit, API and database tests (SQLite + Postgres)
+        env:
+          TEST_DATABASE_URL: postgresql://lb:lbpass@localhost:5432/lbtest
+        run: pytest -o addopts="" -q --junitxml=test-results.xml
+
+      - name: Upload test results
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: test-results
+          path: test-results.xml
+
+  infra:
+    name: Validate infrastructure code
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Install Bicep, kustomize and kubeconform
+        run: |
+          mkdir -p "$HOME/bin" && cd "$HOME/bin"
+          curl -sSLo bicep "https://github.com/Azure/bicep/releases/download/${BICEP_VERSION}/bicep-linux-x64" && chmod +x bicep
+          curl -sSL "https://github.com/kubernetes-sigs/kustomize/releases/download/kustomize%2F${KUSTOMIZE_VERSION}/kustomize_${KUSTOMIZE_VERSION}_linux_amd64.tar.gz" | tar xz
+          curl -sSL "https://github.com/yannh/kubeconform/releases/download/${KUBECONFORM_VERSION}/kubeconform-linux-amd64.tar.gz" | tar xz
+          echo "$HOME/bin" >> "$GITHUB_PATH"
+
+      - name: Bicep build + lint
+        run: |
+          for f in infra/bicep/*.bicep; do
+            echo "== $f"
+            bicep build "$f" --stdout > /dev/null
+            bicep lint "$f"
+          done
+
+      - name: Render and schema-check Kubernetes manifests
+        run: |
+          mkdir -p rendered
+          kustomize build k8s/overlays/kind > rendered/kind.yaml
+          kustomize build k8s/overlays/aks > rendered/aks.yaml
+          kubeconform -strict -summary -kubernetes-version 1.33.0 \
+            -schema-location default \
+            -schema-location 'https://raw.githubusercontent.com/datreeio/CRDs-catalog/main/{{.Group}}/{{.ResourceKind}}_{{.ResourceAPIVersion}}.json' \
+            rendered/kind.yaml rendered/aks.yaml k8s/argocd/application.yaml
+
+      - name: Shellcheck
+        run: shellcheck infra/*.sh scripts/*.sh .devcontainer/*.sh
+
+  train:
+    name: Train and evaluate model
+    needs: quality
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-python@v7
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: pip
+          cache-dependency-path: requirements*.txt
+
+      - name: Install dependencies
+        run: pip install -r requirements-train.txt
+
+      # Fails the build if the model is below the quality gate in params.yaml
+      - name: Train (with quality gate)
+        run: PYTHONPATH=src python -m liquid_biopsy.train
+
+      - name: Publish metrics to job summary
+        if: always()
+        run: |
+          if [ -f models/metrics.json ]; then
+            python - <<'EOF' >> "$GITHUB_STEP_SUMMARY"
+          import json
+          m = json.load(open("models/metrics.json"))
+          meta = json.load(open("models/metadata.json"))
+          print(f"## Model {meta['model_version']}\n")
+          print("| Metric | Value |\n|---|---|")
+          for k in ["cv_roc_auc", "roc_auc", "balanced_accuracy", "sensitivity", "specificity", "f1", "accuracy"]:
+              print(f"| {k} | {m[k]} |")
+          print(f"\nBest params: `{meta['best_params']}`")
+          EOF
+          fi
+
+      - name: Upload model artifact
+        uses: actions/upload-artifact@v7
+        with:
+          name: model
+          path: models/
+          retention-days: 30
+
+      - name: Upload MLflow tracking data
+        uses: actions/upload-artifact@v7
+        with:
+          name: mlflow
+          path: |
+            mlflow.db
+            mlruns/
+          if-no-files-found: ignore
+          retention-days: 30
+
+  container:
+    name: Build image, test with Postgres
+    needs: train
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/download-artifact@v8
+        with:
+          name: model
+          path: models/
+
+      - name: Build image
+        run: docker build -t liquid-biopsy-api:ci .
+
+      - name: API + Postgres + drift job
+        run: bash scripts/container_test.sh liquid-biopsy-api:ci
+
+  kubernetes:
+    name: Deploy to Kubernetes (kind) and test
+    needs: train
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/download-artifact@v8
+        with:
+          name: model
+          path: models/
+
+      - name: Build image
+        run: docker build -t liquid-biopsy-api:dev .
+
+      - name: Create kind cluster
+        uses: helm/kind-action@v1.15.1
+        with:
+          version: ${{ env.KIND_VERSION }}
+          cluster_name: lb-ci
+
+      - name: Load image into the cluster
+        run: kind load docker-image liquid-biopsy-api:dev --name lb-ci
+
+      - name: Deploy (kubectl apply -k k8s/overlays/kind)
+        run: |
+          kubectl apply -k k8s/overlays/kind
+          kubectl -n liquid-biopsy rollout status statefulset/postgres --timeout=180s
+          kubectl -n liquid-biopsy rollout status deployment/liquid-biopsy-api --timeout=300s
+          kubectl -n liquid-biopsy get pods -o wide
+
+      - name: Smoke test through the Kubernetes Service
+        run: |
+          kubectl -n liquid-biopsy port-forward svc/liquid-biopsy-api 8080:80 > port-forward.log 2>&1 &
+          sleep 3
+          bash scripts/smoke_test.sh http://localhost:8080 --expect-db
+
+      - name: Run the drift CronJob once
+        run: |
+          kubectl -n liquid-biopsy create job --from=cronjob/liquid-biopsy-drift drift-ci
+          kubectl -n liquid-biopsy wait --for=condition=complete job/drift-ci --timeout=180s
+          kubectl -n liquid-biopsy logs job/drift-ci | tee drift.log
+          grep -qE "drift_check|DRIFT_DETECTED" drift.log
+
+      - name: Diagnostics
+        if: failure()
+        run: |
+          kubectl -n liquid-biopsy get all
+          kubectl -n liquid-biopsy describe pods
+          kubectl -n liquid-biopsy logs deploy/liquid-biopsy-api --tail=100 || true
+          kubectl -n liquid-biopsy logs statefulset/postgres --tail=50 || true
+          kubectl -n liquid-biopsy get events --sort-by=.lastTimestamp

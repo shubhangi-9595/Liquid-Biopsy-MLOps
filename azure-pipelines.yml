@@ -1,0 +1,117 @@
+# Azure DevOps Pipelines version of the CI pipeline (same checks as .github/workflows/ci.yml).
+#
+# Set up: Azure DevOps -> Pipelines -> New pipeline -> GitHub -> select this repo ->
+#         "Existing Azure Pipelines YAML file" -> /azure-pipelines.yml
+#
+# GitHub Actions remains the deployment path (cd.yml); this pipeline shows the same CI in
+# Azure DevOps: stages, service containers, pipeline artifacts and published test results.
+
+trigger:
+  branches:
+    include: ["*"]
+  paths:
+    exclude: ["**/*.md", "docs/*"]
+
+pr:
+  branches:
+    include: [main]
+
+pool:
+  vmImage: ubuntu-latest
+
+variables:
+  PYTHON_VERSION: "3.12"
+  MLFLOW_DISABLE_AGENT_HINT: "1"
+
+resources:
+  containers:
+    - container: postgres
+      image: postgres:16-alpine
+      env:
+        POSTGRES_USER: lb
+        POSTGRES_PASSWORD: lbpass
+        POSTGRES_DB: lbtest
+      ports:
+        - 5432:5432
+
+stages:
+  - stage: Quality
+    displayName: Lint, validate data, test
+    jobs:
+      - job: Test
+        displayName: Lint + data validation + tests (SQLite and Postgres)
+        services:
+          postgres: postgres
+        steps:
+          - task: UsePythonVersion@0
+            inputs:
+              versionSpec: $(PYTHON_VERSION)
+
+          - script: pip install -r requirements-dev.txt
+            displayName: Install dependencies
+
+          - script: |
+              ruff check .
+              ruff format --check .
+            displayName: Lint (ruff)
+
+          - script: PYTHONPATH=src python -m liquid_biopsy.validate
+            displayName: Validate data
+
+          - script: |
+              for i in $(seq 1 30); do pg_isready -h localhost -p 5432 -U lb && break; sleep 2; done
+              pytest -o addopts="" -q --junitxml=$(Common.TestResultsDirectory)/test-results.xml
+            displayName: Unit, API and database tests
+            env:
+              TEST_DATABASE_URL: postgresql://lb:lbpass@localhost:5432/lbtest
+
+          - task: PublishTestResults@2
+            displayName: Publish test results
+            condition: succeededOrFailed()
+            inputs:
+              testResultsFormat: JUnit
+              testResultsFiles: "**/test-results.xml"
+              searchFolder: $(Common.TestResultsDirectory)
+              testRunTitle: Unit, API and database tests
+
+  - stage: Train
+    displayName: Train and evaluate
+    dependsOn: Quality
+    jobs:
+      - job: Train
+        displayName: Train with quality gate
+        steps:
+          - task: UsePythonVersion@0
+            inputs:
+              versionSpec: $(PYTHON_VERSION)
+
+          - script: pip install -r requirements-train.txt
+            displayName: Install dependencies
+
+          - script: PYTHONPATH=src python -m liquid_biopsy.train
+            displayName: Train (fails if below the quality gate)
+
+          - task: PublishPipelineArtifact@1
+            displayName: Publish model artifact
+            inputs:
+              targetPath: models
+              artifact: model
+
+  - stage: Container
+    displayName: Build image and test
+    dependsOn: Train
+    jobs:
+      - job: Container
+        displayName: Docker image + Postgres + drift job
+        steps:
+          - task: DownloadPipelineArtifact@2
+            displayName: Download model artifact
+            inputs:
+              artifact: model
+              path: $(Build.SourcesDirectory)/models
+
+          - script: docker build -t liquid-biopsy-api:ci .
+            displayName: Build image
+
+          - script: bash scripts/container_test.sh liquid-biopsy-api:ci
+            displayName: API + Postgres + drift job
