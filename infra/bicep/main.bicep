@@ -231,11 +231,12 @@ resource mlWorkspace 'Microsoft.MachineLearningServices/workspaces@2024-04-01' =
 
 // ---------------------------------------------------------------------------- hosting
 
-resource containerAppsEnv 'Microsoft.App/managedEnvironments@2024-03-01' = {
+resource containerAppsEnv 'Microsoft.App/managedEnvironments@2026-07-01' = {
   name: 'cae-lb-${suffix}'
   location: location
   tags: tags
   properties: {
+    environmentMode: 'WorkloadProfiles'
     appLogsConfiguration: {
       destination: 'log-analytics'
       logAnalyticsConfiguration: {
