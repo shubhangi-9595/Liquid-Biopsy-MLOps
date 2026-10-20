@@ -1,0 +1,69 @@
+# Azure Kubernetes Service. Argo CD watches THIS folder and keeps the cluster in sync.
+#
+# - The image line below is updated by the CD pipeline on every release (GitOps):
+#   CD commits the new tag here, Argo CD notices the commit and rolls it out.
+# - azure.env is written by infra/aks.sh with your Key Vault / identity IDs.
+# - Secrets (database URL, Application Insights) come from Azure Key Vault through the
+#   Secrets Store CSI driver + workload identity: no password is stored in Git.
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+resources:
+  - ../../base
+  - secretproviderclass.yaml
+
+images:
+  - name: liquid-biopsy-api
+    newName: REPLACE_WITH_ACR.azurecr.io/liquid-biopsy-api
+    newTag: latest
+
+configMapGenerator:
+  - name: azure-values
+    envs:
+      - azure.env
+    options:
+      disableNameSuffixHash: true
+
+patches:
+  - path: patch-workload-identity.yaml
+  - target:
+      kind: CronJob
+      name: liquid-biopsy-drift
+    path: patch-cronjob-keyvault.yaml
+
+replacements:
+  - source:
+      kind: ConfigMap
+      name: azure-values
+      fieldPath: data.KEYVAULT_NAME
+    targets:
+      - select:
+          kind: SecretProviderClass
+          name: liquid-biopsy-keyvault
+        fieldPaths:
+          - spec.parameters.keyvaultName
+  - source:
+      kind: ConfigMap
+      name: azure-values
+      fieldPath: data.TENANT_ID
+    targets:
+      - select:
+          kind: SecretProviderClass
+          name: liquid-biopsy-keyvault
+        fieldPaths:
+          - spec.parameters.tenantId
+  - source:
+      kind: ConfigMap
+      name: azure-values
+      fieldPath: data.WORKLOAD_CLIENT_ID
+    targets:
+      - select:
+          kind: SecretProviderClass
+          name: liquid-biopsy-keyvault
+        fieldPaths:
+          - spec.parameters.clientID
+      - select:
+          kind: ServiceAccount
+          name: liquid-biopsy-api
+        fieldPaths:
+          - metadata.annotations.[azure.workload.identity/client-id]

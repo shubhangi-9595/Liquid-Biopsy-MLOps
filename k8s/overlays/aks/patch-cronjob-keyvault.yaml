@@ -1,0 +1,25 @@
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: liquid-biopsy-drift
+spec:
+  jobTemplate:
+    spec:
+      template:
+        metadata:
+          labels:
+            azure.workload.identity/use: "true"
+        spec:
+          containers:
+            - name: drift
+              volumeMounts:
+                - name: keyvault
+                  mountPath: /mnt/secrets-store
+                  readOnly: true
+          volumes:
+            - name: keyvault
+              csi:
+                driver: secrets-store.csi.k8s.io
+                readOnly: true
+                volumeAttributes:
+                  secretProviderClass: liquid-biopsy-keyvault

@@ -1,0 +1,11 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: liquid-biopsy-config
+data:
+  RUN_MIGRATIONS: "true"          # the API migrates the schema on startup (advisory-locked)
+  DB_CONNECT_ATTEMPTS: "20"       # wait up to ~1 minute for Postgres
+  DRIFT_WINDOW_DAYS: "7"
+  DRIFT_MIN_PREDICTIONS: "30"
+  DRIFT_PSI_THRESHOLD: "0.25"
+  DRIFT_MAX_FLAGGED_SHARE: "0.10"

@@ -1,0 +1,16 @@
+# Local / CI cluster (kind = Kubernetes in Docker). Adds a throwaway Postgres.
+#   kind create cluster --name liquid-biopsy
+#   docker build -t liquid-biopsy-api:dev . && kind load docker-image liquid-biopsy-api:dev --name liquid-biopsy
+#   kubectl apply -k k8s/overlays/kind
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+resources:
+  - ../../base
+  - postgres.yaml
+  - secrets.yaml
+
+images:
+  - name: liquid-biopsy-api
+    newName: liquid-biopsy-api
+    newTag: dev

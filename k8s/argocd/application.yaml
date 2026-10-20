@@ -1,0 +1,32 @@
+# Argo CD Application: "keep the cluster in sync with k8s/overlays/aks on main".
+# Applied by infra/aks.sh (which fills in your repository URL).
+#   - automated sync: a new commit on main is rolled out without anyone running kubectl
+#   - selfHeal: manual changes made directly in the cluster are reverted to match Git
+#   - prune: resources deleted from Git are deleted from the cluster
+# Rolling back a release = `git revert` the CD commit that changed the image tag.
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: liquid-biopsy
+  namespace: argocd
+spec:
+  project: default
+  source:
+    repoURL: https://github.com/REPLACE_OWNER/REPLACE_REPO.git
+    targetRevision: main
+    path: k8s/overlays/aks
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: liquid-biopsy
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+      - CreateNamespace=true
+    retry:
+      limit: 5
+      backoff:
+        duration: 10s
+        factor: 2
+        maxDuration: 3m

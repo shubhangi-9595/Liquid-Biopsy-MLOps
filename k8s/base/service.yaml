@@ -1,0 +1,14 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: liquid-biopsy-api
+  labels:
+    app.kubernetes.io/name: liquid-biopsy-api
+spec:
+  type: ClusterIP   # reach it with: kubectl -n liquid-biopsy port-forward svc/liquid-biopsy-api 8080:80
+  selector:
+    app.kubernetes.io/name: liquid-biopsy-api
+  ports:
+    - name: http
+      port: 80
+      targetPort: http

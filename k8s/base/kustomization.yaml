@@ -1,0 +1,25 @@
+# Base Kubernetes manifests, shared by every environment.
+# Overlays add what differs per environment:
+#   overlays/kind  local / CI cluster with an in-cluster Postgres
+#   overlays/aks   Azure Kubernetes Service, secrets from Azure Key Vault, deployed by Argo CD
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+namespace: liquid-biopsy
+
+labels:
+  - pairs:
+      app.kubernetes.io/part-of: liquid-biopsy
+
+resources:
+  - namespace.yaml
+  - serviceaccount.yaml
+  - configmap.yaml
+  - deployment.yaml
+  - service.yaml
+  - hpa.yaml
+  - cronjob-drift.yaml
+
+images:
+  - name: liquid-biopsy-api
+    newTag: latest
