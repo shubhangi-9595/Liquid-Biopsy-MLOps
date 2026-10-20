@@ -16,7 +16,6 @@ I also tested the model on two completely new datasets from other labs, and that
 - **Azure:** Container Apps, Container Registry, Machine Learning, Key Vault, PostgreSQL, Application Insights, AKS, Bicep
 - **CI/CD:** GitHub Actions, Azure DevOps Pipelines, ruff, pytest
 
----
 
 ## Data
 
@@ -254,17 +253,3 @@ A model that looks great on one dataset can fail on data from another lab, even 
 | `azure-pipelines.yml` | The same CI for Azure DevOps |
 | `notebooks/` | The original R preprocessing and my original notebook |
 | `params.yaml` | All settings for data, model and quality gate |
-
-## Run it locally
-
-    git clone https://github.com/shubhangi-9595/Liquid-Biopsy-MLOps.git
-    cd Liquid-Biopsy-MLOps
-    make install
-    make validate    # check the data
-    make train       # train, evaluate, quality gate
-    make test        # run the tests
-    make serve       # API on http://localhost:8000/docs
-    make leakage     # compare the leaky and the correct evaluation
-
-`make help` shows all commands. To deploy to Azure, run `infra/setup.sh` in Azure Cloud Shell.
-
