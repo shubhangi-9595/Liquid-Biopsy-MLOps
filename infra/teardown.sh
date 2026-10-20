@@ -10,7 +10,7 @@ APP_REG_NAME="gh-liquid-biopsy-deploy"
 read -r -p "Permanently delete resource group '$RESOURCE_GROUP' and everything in it? [y/N] " answer
 [[ "$answer" =~ ^[Yy]$ ]] || { echo "Aborted."; exit 0; }
 
-az extension add --name ml --upgrade --only-show-errors -o none
+az extension add --name ml --upgrade --only-show-errors -o none || echo "Using the preinstalled Azure CLI extension"
 ML_WS=$(az ml workspace list -g "$RESOURCE_GROUP" --query "[0].name" -o tsv 2>/dev/null || true)
 if [ -n "$ML_WS" ]; then
   echo "==> Permanently deleting Azure ML workspace $ML_WS"

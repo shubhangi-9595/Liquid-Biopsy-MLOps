@@ -67,8 +67,8 @@ for ns in Microsoft.App Microsoft.ContainerRegistry Microsoft.OperationalInsight
   Microsoft.ManagedIdentity Microsoft.ContainerService; do
   az provider register --namespace "$ns" --wait -o none
 done
-az extension add --name containerapp --upgrade --only-show-errors -o none
-az extension add --name ml --upgrade --only-show-errors -o none
+az extension add --name containerapp --upgrade --only-show-errors -o none || echo "Using the preinstalled Azure CLI extension"
+az extension add --name ml --upgrade --only-show-errors -o none || echo "Using the preinstalled Azure CLI extension"
 
 step "Resource group $RESOURCE_GROUP ($LOCATION)"
 az group create --name "$RESOURCE_GROUP" --location "$LOCATION" -o none
